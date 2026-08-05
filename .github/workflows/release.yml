@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup component add clippy
+      - name: Match tag and package version
+        shell: bash
+        run: |
+          package_version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "codex-artifact-cli") | .version')"
+          test "${GITHUB_REF_NAME}" = "v${package_version}"
+      - name: Test release workspace
+        run: cargo test --workspace --locked
+      - name: Lint release workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            archive: codex-artifact-${{ github.ref_name }}-x86_64-unknown-linux-musl
+            extension: tar.gz
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            archive: codex-artifact-${{ github.ref_name }}-aarch64-unknown-linux-musl
+            extension: tar.gz
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: codex-artifact-${{ github.ref_name }}-x86_64-apple-darwin
+            extension: tar.gz
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            archive: codex-artifact-${{ github.ref_name }}-aarch64-apple-darwin
+            extension: tar.gz
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            archive: codex-artifact-${{ github.ref_name }}-x86_64-pc-windows-msvc
+            extension: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install stable Rust target
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add "${{ matrix.target }}"
+      - name: Install musl linker
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+      - name: Build companion
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin codex-artifact
+      - name: Package Unix companion
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "dist/${{ matrix.archive }}"
+          cp "target/${{ matrix.target }}/release/codex-artifact" "dist/${{ matrix.archive }}/"
+          cp README.md LICENSE "dist/${{ matrix.archive }}/"
+          tar -C dist -czf "dist/${{ matrix.archive }}.${{ matrix.extension }}" "${{ matrix.archive }}"
+      - name: Package Windows companion
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "dist/${{ matrix.archive }}" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/codex-artifact.exe" "dist/${{ matrix.archive }}/"
+          Copy-Item README.md, LICENSE "dist/${{ matrix.archive }}/"
+          Compress-Archive -Path "dist/${{ matrix.archive }}" -DestinationPath "dist/${{ matrix.archive }}.${{ matrix.extension }}"
+      - name: Upload packaged companion
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/${{ matrix.archive }}.${{ matrix.extension }}
+          archive: false
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download packaged companions
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: codex-artifact-*
+          merge-multiple: true
+          skip-decompress: true
+      - name: Generate SHA-256 checksums
+        working-directory: dist
+        run: sha256sum codex-artifact-* > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "Codex Artifact Runtime ${GITHUB_REF_NAME}"

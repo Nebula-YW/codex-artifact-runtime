@@ -108,6 +108,10 @@ async fn run() -> Result<(), CliError> {
         println!("{}", usage());
         return Ok(());
     }
+    if matches!(arguments.as_slice(), [argument] if argument == "--version" || argument == "-V") {
+        println!("codex-artifact {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let options = parse_options(arguments)?;
     let catalog = load_catalog(&options.catalog)?;
     let host = load_host(

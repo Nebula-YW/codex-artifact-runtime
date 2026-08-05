@@ -56,7 +56,7 @@ cargo install --path crates/codex-artifact-cli --locked
 codex-artifact --help
 ```
 
-Once release binaries are published, ordinary users will install the matching macOS, Linux, or Windows binary and will not need Rust or this source repository. The capability catalog and bindings can be distributed with an Application package or selected from a project directory.
+Release archives provide native binaries for Linux x64/ARM64, macOS Intel/Apple Silicon, and Windows x64. Ordinary users do not need Rust or this source repository. The capability catalog and bindings can be distributed with an Application package or selected from a project directory. See the [installation guide](docs/install.md).
 
 Run the installed companion while continuing to use the official TUI:
 
