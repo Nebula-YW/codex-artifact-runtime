@@ -1,0 +1,5 @@
+/target/
+/apps/application-runtime/node_modules/
+/apps/application-runtime/dist/
+*.log
+.DS_Store

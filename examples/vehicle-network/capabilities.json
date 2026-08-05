@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "namespaces": [
+    {
+      "name": "autoComm",
+      "description": "Vehicle communication, simulation, observation, and fault-injection operations",
+      "operations": [
+        {
+          "name": "inspectNetwork",
+          "description": "Inspect the resolved vehicle communication topology before a test",
+          "kind": "request",
+          "risk": "read",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "model": { "type": "string" },
+              "localNode": { "type": "string" }
+            },
+            "required": ["model", "localNode"]
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "nodes": { "type": "array", "items": { "type": "string" } },
+              "links": { "type": "array", "items": { "type": "string" } },
+              "readiness": { "type": "string", "enum": ["ready", "partial", "blocked"] }
+            },
+            "required": ["nodes", "links", "readiness"]
+          }
+        },
+        {
+          "name": "injectFault",
+          "description": "Inject an explicit fault into a resolved signal or service target",
+          "kind": "request",
+          "risk": "external_side_effect",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "target": { "type": "string" },
+              "action": { "type": "string", "enum": ["drop", "delay", "freeze", "rewrite"] },
+              "value": {}
+            },
+            "required": ["target", "action"]
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "faultId": { "type": "string" },
+              "status": { "type": "string", "enum": ["active", "rejected"] }
+            },
+            "required": ["faultId", "status"]
+          }
+        },
+        {
+          "name": "readSpeed",
+          "description": "Read the current vehicle speed through the resolved communication model",
+          "kind": "request",
+          "risk": "read",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "selector": { "type": "string" }
+            },
+            "required": ["selector"]
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "speedKph": { "type": "number" },
+              "timestampMs": { "type": "integer" },
+              "quality": { "type": "string", "enum": ["valid", "stale", "invalid"] }
+            },
+            "required": ["speedKph", "timestampMs", "quality"]
+          }
+        },
+        {
+          "name": "watchSpeed",
+          "description": "Continuously observe vehicle-speed values for an interactive Application",
+          "kind": "stream",
+          "risk": "read",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "selector": { "type": "string" }
+            },
+            "required": ["selector"]
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "speedKph": { "type": "number" },
+              "timestampMs": { "type": "integer" }
+            },
+            "required": ["speedKph", "timestampMs"]
+          }
+        }
+      ]
+    }
+  ]
+}
