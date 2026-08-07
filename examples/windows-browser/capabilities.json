@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "namespaces": [
+    {
+      "name": "webBrowser",
+      "description": "Control an isolated persistent agent-browser profile through the Host policy seam; raw cookies, tokens, headers and storage are never exposed to Code Mode",
+      "operations": [
+        {
+          "name":"attach","description":"Start or reuse the configured persistent agent-browser session","kind":"request","risk":"read",
+          "inputSchema":{"type":"object"},
+          "outputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"browser":{"type":"string"},"attached":{"type":"boolean"}},"required":["session_id","browser","attached"]}
+        },
+        {
+          "name":"listPages","description":"List opaque page handles in an authorized browser session","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]},
+          "outputSchema":{"type":"object","properties":{"pages":{"type":"array","items":{"type":"object","properties":{"page_id":{"type":"string"},"title":{"type":"string"},"url":{"type":"string"},"current":{"type":"boolean"}},"required":["page_id","title","url","current"]}}},"required":["pages"]}
+        },
+        {
+          "name":"openPage","description":"Open an allowlisted HTTP(S) URL in a new tab","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"url":{"type":"string"}},"required":["session_id","url"]},
+          "outputSchema":{"type":"object","properties":{"pages":{"type":"array","items":{"type":"object","properties":{"page_id":{"type":"string"},"title":{"type":"string"},"url":{"type":"string"},"current":{"type":"boolean"}},"required":["page_id","title","url","current"]}}},"required":["pages"]}
+        },
+        {
+          "name":"navigate","description":"Navigate an authorized page to an allowlisted HTTP(S) URL","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"},"url":{"type":"string"}},"required":["session_id","page_id","url"]},
+          "outputSchema":{"type":"object","properties":{"pages":{"type":"array","items":{"type":"object","properties":{"page_id":{"type":"string"},"title":{"type":"string"},"url":{"type":"string"},"current":{"type":"boolean"}},"required":["page_id","title","url","current"]}}},"required":["pages"]}
+        },
+        {
+          "name":"snapshot","description":"Read an accessibility snapshot without exposing browser secrets","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"}},"required":["session_id","page_id"]},
+          "outputSchema":{"type":"object","properties":{"snapshot":{"type":"string"}},"required":["snapshot"]}
+        },
+        {
+          "name":"click","description":"Click an element ref from the latest snapshot with an explicit intent classification","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"},"target":{"type":"string"},"intent":{"type":"string","enum":["read","low_risk","high_risk"]}},"required":["session_id","page_id","target","intent"]},
+          "outputSchema":{"type":"object","properties":{"result":{"type":"string"}},"required":["result"]}
+        },
+        {
+          "name":"fill","description":"Fill a form control selected by an element ref; useful for ordinary sign-in forms but never exposes stored browser credentials","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"},"target":{"type":"string"},"text":{"type":"string"}},"required":["session_id","page_id","target","text"]},
+          "outputSchema":{"type":"object","properties":{"result":{"type":"string"}},"required":["result"]}
+        },
+        {
+          "name":"press","description":"Send a validated keyboard key or shortcut to the active authorized page","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"},"key":{"type":"string"}},"required":["session_id","page_id","key"]},
+          "outputSchema":{"type":"object","properties":{"result":{"type":"string"}},"required":["result"]}
+        },
+        {
+          "name":"read","description":"Read visible text from an element ref","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"},"target":{"type":"string"}},"required":["session_id","page_id","target"]},
+          "outputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}
+        },
+        {
+          "name":"scroll","description":"Scroll an authorized page by bounded pixel deltas","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"},"delta_x":{"type":"integer"},"delta_y":{"type":"integer"}},"required":["session_id","page_id","delta_y"]},
+          "outputSchema":{"type":"object","properties":{"scrolled":{"type":"boolean"}},"required":["scrolled"]}
+        },
+        {
+          "name":"waitFor","description":"Wait for visible text in the active agent-browser page","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"},"text":{"type":"string"}},"required":["session_id","page_id","text"]},
+          "outputSchema":{"type":"object","properties":{"result":{"type":"string"}},"required":["result"]}
+        },
+        {
+          "name":"closePage","description":"Close an explicitly selected page","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"}},"required":["session_id","page_id"]},
+          "outputSchema":{"type":"object","properties":{"closed":{"type":"boolean"}},"required":["closed"]}
+        },
+        {
+          "name":"screenshot","description":"Capture an authorized page to a Host-generated workspace artifact path","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"}},"required":["session_id","page_id"]},
+          "outputSchema":{"type":"object","properties":{"artifact_id":{"type":"string"},"root":{"type":"string"},"path":{"type":"string"}},"required":["artifact_id","root","path"]}
+        },
+        {
+          "name":"videoStart","description":"Start video recording to a Host-generated workspace artifact path","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"}},"required":["session_id","page_id"]},
+          "outputSchema":{"type":"object","properties":{"recording":{"type":"boolean"},"artifact_id":{"type":"string"}},"required":["recording","artifact_id"]}
+        },
+        {
+          "name":"videoStop","description":"Stop recording and return its opaque workspace artifact","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]},
+          "outputSchema":{"type":"object","properties":{"artifact_id":{"type":"string"},"root":{"type":"string"},"path":{"type":"string"}},"required":["artifact_id","root","path"]}
+        },
+        {
+          "name":"videoInspect","description":"Decode a registered WebM artifact and report its duration plus sampled frame variation without accepting a filesystem path","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"artifact_id":{"type":"string"}},"required":["artifact_id"]},
+          "outputSchema":{"type":"object","properties":{"artifact_id":{"type":"string"},"container":{"type":"string"},"video_codec":{"type":"string"},"decodable":{"type":"boolean"},"duration_seconds":{"type":"number"},"sampled_frames":{"type":"integer"},"distinct_frame_hashes":{"type":"integer"},"frames_changed":{"type":"boolean"}},"required":["artifact_id","container","video_codec","decodable","duration_seconds","sampled_frames","distinct_frame_hashes","frames_changed"]}
+        },
+        {
+          "name":"download","description":"Click a download element and save the download to a Host-generated workspace artifact","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"page_id":{"type":"string"},"target":{"type":"string"}},"required":["session_id","page_id","target"]},
+          "outputSchema":{"type":"object","properties":{"artifact_id":{"type":"string"},"root":{"type":"string"},"path":{"type":"string"},"suggested_filename":{"type":"string"}},"required":["artifact_id","root","path","suggested_filename"]}
+        }
+      ]
+    },
+    {
+      "name":"fs","description":"Read UTF-8 text and write new text artifacts within configured logical roots; absolute paths, traversal, ADS, reserved names and symlink escapes are rejected",
+      "operations":[
+        {
+          "name":"readText","description":"Read an existing UTF-8 text file inside a configured logical root without following symlink escapes","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"root":{"type":"string"},"path":{"type":"string"}},"required":["root","path"]},
+          "outputSchema":{"type":"object","properties":{"root":{"type":"string"},"path":{"type":"string"},"bytes":{"type":"integer"},"content":{"type":"string"}},"required":["root","path","bytes","content"]}
+        },
+        {
+          "name":"writeText","description":"Atomically create a UTF-8 text file without overwriting an existing file","kind":"request","risk":"write",
+          "inputSchema":{"type":"object","properties":{"root":{"type":"string"},"path":{"type":"string"},"content":{"type":"string"}},"required":["root","path","content"]},
+          "outputSchema":{"type":"object","properties":{"root":{"type":"string"},"path":{"type":"string"},"bytes":{"type":"integer"}},"required":["root","path","bytes"]}
+        }
+      ]
+    },
+    {
+      "name":"approval","description":"Inspect Host policy and surface high-risk operations for manual approval; this namespace never grants its own approval",
+      "operations":[
+        {
+          "name":"getPolicy","description":"Read the effective Host policy","kind":"request","risk":"read",
+          "inputSchema":{"type":"object"},
+          "outputSchema":{"type":"object","properties":{"allowed_hosts":{"type":"array","items":{"type":"string"}},"allow_local_writes":{"type":"boolean"},"allow_low_risk_browser_actions":{"type":"boolean"},"high_risk":{"type":"string"}},"required":["allowed_hosts","allow_local_writes","allow_low_risk_browser_actions","high_risk"]}
+        },
+        {
+          "name":"request","description":"Return a manual-approval requirement for a named high-risk operation","kind":"request","risk":"read",
+          "inputSchema":{"type":"object","properties":{"operation":{"type":"string"}},"required":["operation"]},
+          "outputSchema":{"type":"object","properties":{"status":{"type":"string","enum":["manual_required"]},"operation":{"type":"string"},"reason":{"type":"string"}},"required":["status","operation","reason"]}
+        }
+      ]
+    }
+  ]
+}

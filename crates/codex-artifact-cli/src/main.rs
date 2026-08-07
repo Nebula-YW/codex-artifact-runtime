@@ -8,7 +8,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use capability_core::{CapabilityCatalog, OperationRisk};
-use capability_host::{CapabilityHost, CliArgument, CliBinding, InvocationGuard, OperationHandler};
+use capability_host::{
+    AgentBrowserCliConfig, AgentBrowserHost, BrowserOperation, BrowserOperationHandler,
+    CapabilityHost, CliArgument, CliBinding, FileReadTextHandler, FileWriteTextHandler,
+    InvocationGuard, OperationHandler, SafeFileHost,
+};
 use codex_app_server_adapter::{handle_dynamic_tool_call, is_dynamic_tool_call};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -38,13 +42,53 @@ struct Options {
     listen: String,
     no_tui: bool,
     allow_side_effects: bool,
+    require_new_thread: bool,
     tui_args: Vec<OsString>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BindingsFile {
+    #[serde(default)]
+    policy: HostPolicy,
+    #[serde(default)]
+    file_roots: BTreeMap<String, PathBuf>,
+    agent_browser: Option<AgentBrowserBinding>,
     operations: Vec<OperationBinding>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostPolicy {
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
+    #[serde(default)]
+    allow_local_writes: bool,
+    #[serde(default)]
+    allow_low_risk_browser_actions: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentBrowserBinding {
+    command: PathBuf,
+    #[serde(default)]
+    args: Vec<String>,
+    working_directory: PathBuf,
+    artifact_directory: PathBuf,
+    session_name: String,
+    profile_directory: PathBuf,
+    executable_path: Option<PathBuf>,
+    cdp_endpoint: Option<String>,
+    #[serde(default)]
+    auto_connect: bool,
+    #[serde(default = "default_true")]
+    headed: bool,
+    timeout_ms: Option<u64>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,11 +96,17 @@ struct BindingsFile {
 struct OperationBinding {
     namespace: String,
     operation: String,
-    command: PathBuf,
+    #[serde(default = "default_handler")]
+    handler: String,
+    command: Option<PathBuf>,
     #[serde(default)]
     args: Vec<BindingArgument>,
     working_directory: Option<PathBuf>,
     timeout_ms: Option<u64>,
+}
+
+fn default_handler() -> String {
+    "cli".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +118,32 @@ enum BindingArgument {
 
 struct RiskGuard {
     allow_side_effects: bool,
+    policy: HostPolicy,
+}
+
+struct PolicyHandler {
+    policy: HostPolicy,
+    request: bool,
+}
+
+#[async_trait]
+impl OperationHandler for PolicyHandler {
+    async fn invoke(&self, input: Value) -> Result<Value, capability_host::HostError> {
+        if self.request {
+            Ok(serde_json::json!({
+                "status": "manual_required",
+                "operation": input.get("operation").cloned().unwrap_or(Value::Null),
+                "reason": "high-risk browser actions require a manual restart with --allow-side-effects"
+            }))
+        } else {
+            Ok(serde_json::json!({
+                "allowed_hosts": self.policy.allowed_hosts,
+                "allow_local_writes": self.policy.allow_local_writes,
+                "allow_low_risk_browser_actions": self.policy.allow_low_risk_browser_actions,
+                "high_risk": "manual_required"
+            }))
+        }
+    }
 }
 
 #[async_trait]
@@ -77,9 +153,31 @@ impl InvocationGuard for RiskGuard {
         namespace: &str,
         operation: &str,
         risk: OperationRisk,
-        _input: &Value,
+        input: &Value,
     ) -> Result<(), String> {
-        if risk == OperationRisk::Read || self.allow_side_effects {
+        let local_artifact = namespace == "fs"
+            || (namespace == "webBrowser"
+                && matches!(
+                    operation,
+                    "screenshot" | "videoStart" | "videoStop" | "download"
+                ));
+        let browser_click_allowed = namespace == "webBrowser"
+            && operation == "click"
+            && match input
+                .get("intent")
+                .and_then(Value::as_str)
+                .unwrap_or("high_risk")
+            {
+                "read" => true,
+                "low_risk" => self.policy.allow_low_risk_browser_actions,
+                "high_risk" => self.allow_side_effects,
+                _ => false,
+            };
+        if risk == OperationRisk::Read
+            || (local_artifact && self.policy.allow_local_writes)
+            || browser_click_allowed
+            || self.allow_side_effects
+        {
             Ok(())
         } else {
             Err(format!(
@@ -123,7 +221,7 @@ async fn run() -> Result<(), CliError> {
 }
 
 fn usage() -> String {
-    "usage: codex-artifact run --catalog <capabilities.json> --bindings <bindings.json> [--codex-bin <path>] [--listen 127.0.0.1:0] [--no-tui] [--allow-side-effects] [-- <official codex TUI args>]".to_string()
+    "usage: codex-artifact run --catalog <capabilities.json> --bindings <bindings.json> [--codex-bin <path>] [--listen 127.0.0.1:0] [--no-tui] [--allow-side-effects] [--require-new-thread] [-- <official codex TUI args>]".to_string()
 }
 
 fn parse_options(arguments: Vec<OsString>) -> Result<Options, CliError> {
@@ -136,6 +234,7 @@ fn parse_options(arguments: Vec<OsString>) -> Result<Options, CliError> {
     let mut listen = "127.0.0.1:0".to_string();
     let mut no_tui = false;
     let mut allow_side_effects = false;
+    let mut require_new_thread = false;
     let mut tui_args = Vec::new();
     let mut index = 1;
     while index < arguments.len() {
@@ -149,6 +248,7 @@ fn parse_options(arguments: Vec<OsString>) -> Result<Options, CliError> {
         match argument {
             "--no-tui" => no_tui = true,
             "--allow-side-effects" => allow_side_effects = true,
+            "--require-new-thread" => require_new_thread = true,
             "--catalog" | "--bindings" | "--codex-bin" | "--listen" => {
                 index += 1;
                 let value = arguments
@@ -185,6 +285,7 @@ fn parse_options(arguments: Vec<OsString>) -> Result<Options, CliError> {
         listen,
         no_tui,
         allow_side_effects,
+        require_new_thread,
         tui_args,
     })
 }
@@ -213,6 +314,52 @@ fn load_host(
     let bindings = serde_json::from_str::<BindingsFile>(&source).map_err(|error| {
         CliError::Configuration(format!("failed to parse {}: {error}", path.display()))
     })?;
+    let binding_directory = std::fs::canonicalize(path.parent().unwrap_or_else(|| Path::new(".")))
+        .map_err(|error| {
+            CliError::Configuration(format!(
+                "failed to resolve binding directory for {}: {error}",
+                path.display()
+            ))
+        })?;
+    let policy = bindings.policy.clone();
+    let file_host = if bindings.file_roots.is_empty() {
+        None
+    } else {
+        let roots = bindings
+            .file_roots
+            .into_iter()
+            .map(|(name, path)| (name, resolve_binding_path(&binding_directory, path)))
+            .collect();
+        Some(SafeFileHost::new(roots).map_err(|error| CliError::Configuration(error.to_string()))?)
+    };
+    let browser_host = bindings
+        .agent_browser
+        .map(|binding| {
+            AgentBrowserHost::new(AgentBrowserCliConfig {
+                command: binding.command,
+                prefix_args: binding.args,
+                working_directory: resolve_binding_path(
+                    &binding_directory,
+                    binding.working_directory,
+                ),
+                artifact_directory: binding.artifact_directory,
+                session_name: binding.session_name,
+                profile_directory: resolve_binding_path(
+                    &binding_directory,
+                    binding.profile_directory,
+                ),
+                executable_path: binding
+                    .executable_path
+                    .map(|path| resolve_binding_path(&binding_directory, path)),
+                cdp_endpoint: binding.cdp_endpoint,
+                auto_connect: binding.auto_connect,
+                headed: binding.headed,
+                allowed_hosts: policy.allowed_hosts.clone(),
+                timeout: Duration::from_millis(binding.timeout_ms.unwrap_or(30_000)),
+            })
+            .map_err(|error| CliError::Configuration(error.to_string()))
+        })
+        .transpose()?;
     let mut handlers = BTreeMap::<(String, String), Arc<dyn OperationHandler>>::new();
     for binding in bindings.operations {
         let definition = catalog
@@ -231,27 +378,117 @@ fn load_host(
                 key.0, key.1
             )));
         }
-        let arguments = binding
-            .args
-            .into_iter()
-            .map(|argument| match argument {
-                BindingArgument::Literal(value) => CliArgument::Literal(value),
-                BindingArgument::Input { input } => CliArgument::InputPointer(input),
-            })
-            .collect();
-        let mut handler = CliBinding::with_arguments(binding.command, arguments);
-        handler.working_directory = binding.working_directory;
-        if let Some(timeout_ms) = binding.timeout_ms {
-            handler.timeout = Duration::from_millis(timeout_ms);
-        }
-        handlers.insert(key, Arc::new(handler));
+        let handler: Arc<dyn OperationHandler> = match binding.handler.as_str() {
+            "cli" => {
+                let command = binding.command.ok_or_else(|| {
+                    CliError::Configuration(format!(
+                        "{}.{} CLI binding requires command",
+                        key.0, key.1
+                    ))
+                })?;
+                let arguments = binding
+                    .args
+                    .into_iter()
+                    .map(|argument| match argument {
+                        BindingArgument::Literal(value) => CliArgument::Literal(value),
+                        BindingArgument::Input { input } => CliArgument::InputPointer(input),
+                    })
+                    .collect();
+                let mut handler = CliBinding::with_arguments(command, arguments);
+                handler.working_directory = binding
+                    .working_directory
+                    .map(|path| resolve_binding_path(&binding_directory, path));
+                if let Some(timeout_ms) = binding.timeout_ms {
+                    handler.timeout = Duration::from_millis(timeout_ms);
+                }
+                Arc::new(handler)
+            }
+            "fileWriteText" => Arc::new(FileWriteTextHandler::new(file_host.clone().ok_or_else(
+                || {
+                    CliError::Configuration(
+                        "fileWriteText requires at least one fileRoots entry".into(),
+                    )
+                },
+            )?)),
+            "fileReadText" => Arc::new(FileReadTextHandler::new(file_host.clone().ok_or_else(
+                || {
+                    CliError::Configuration(
+                        "fileReadText requires at least one fileRoots entry".into(),
+                    )
+                },
+            )?)),
+            "policyInfo" => Arc::new(PolicyHandler {
+                policy: policy.clone(),
+                request: false,
+            }),
+            "policyRequest" => Arc::new(PolicyHandler {
+                policy: policy.clone(),
+                request: true,
+            }),
+            browser_handler if browser_handler.starts_with("agentBrowser") => {
+                let operation = browser_operation(browser_handler)?;
+                Arc::new(BrowserOperationHandler::new(
+                    browser_host.clone().ok_or_else(|| {
+                        CliError::Configuration(format!(
+                            "{browser_handler} requires agentBrowser configuration"
+                        ))
+                    })?,
+                    operation,
+                ))
+            }
+            unknown => {
+                return Err(CliError::Configuration(format!(
+                    "unknown handler {unknown:?}"
+                )));
+            }
+        };
+        handlers.insert(key, handler);
     }
     CapabilityHost::new(
         catalog,
-        Arc::new(RiskGuard { allow_side_effects }),
+        Arc::new(RiskGuard {
+            allow_side_effects,
+            policy,
+        }),
         handlers,
     )
     .map_err(|error| CliError::Configuration(error.to_string()))
+}
+
+fn resolve_binding_path(binding_directory: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        binding_directory.join(path)
+    }
+}
+
+fn browser_operation(handler: &str) -> Result<BrowserOperation, CliError> {
+    let operation = match handler {
+        "agentBrowserAttach" => BrowserOperation::Attach,
+        "agentBrowserListPages" => BrowserOperation::ListPages,
+        "agentBrowserOpenPage" => BrowserOperation::OpenPage,
+        "agentBrowserNavigate" => BrowserOperation::Navigate,
+        "agentBrowserSnapshot" => BrowserOperation::Snapshot,
+        "agentBrowserClick" => BrowserOperation::Click,
+        "agentBrowserFill" => BrowserOperation::Fill,
+        "agentBrowserPress" => BrowserOperation::Press,
+        "agentBrowserRead" => BrowserOperation::Read,
+        "agentBrowserScroll" => BrowserOperation::Scroll,
+        "agentBrowserWaitFor" => BrowserOperation::WaitFor,
+        "agentBrowserClosePage" => BrowserOperation::ClosePage,
+        "agentBrowserScreenshot" => BrowserOperation::Screenshot,
+        "agentBrowserVideoStart" => BrowserOperation::VideoStart,
+        "agentBrowserVideoStop" => BrowserOperation::VideoStop,
+        "agentBrowserVideoInspect" => BrowserOperation::VideoInspect,
+        "agentBrowserDownload" => BrowserOperation::Download,
+        _ => {
+            return Err(CliError::Configuration(format!(
+                "unknown agent-browser handler {handler:?}"
+            )));
+        }
+    };
+    Ok(operation)
 }
 
 async fn run_gateway(
@@ -303,11 +540,34 @@ async fn run_gateway(
         )?)
     };
 
-    let (stream, _) = listener
-        .accept()
-        .await
-        .map_err(|error| CliError::Runtime(format!("failed to accept Codex TUI: {error}")))?;
-    serve_connection(stream, app_stdout, app_tx.clone(), catalog, host).await?;
+    let (stream, _) = if let Some(tui) = tui.as_mut() {
+        tokio::select! {
+            accepted = listener.accept() => accepted
+                .map_err(|error| CliError::Runtime(format!("failed to accept Codex TUI: {error}")))?,
+            status = tui.wait() => {
+                let status = status.map_err(|error| {
+                    CliError::Runtime(format!("failed to wait for official Codex TUI: {error}"))
+                })?;
+                return Err(CliError::Runtime(format!(
+                    "official Codex TUI exited before connecting to the artifact gateway: {status}"
+                )));
+            }
+        }
+    } else {
+        listener
+            .accept()
+            .await
+            .map_err(|error| CliError::Runtime(format!("failed to accept Codex TUI: {error}")))?
+    };
+    serve_connection(
+        stream,
+        app_stdout,
+        app_tx.clone(),
+        catalog,
+        host,
+        options.require_new_thread,
+    )
+    .await?;
 
     drop(app_tx);
     let _ = writer.await;
@@ -321,6 +581,10 @@ async fn run_gateway(
 fn spawn_app_server(codex_bin: &Path) -> Result<Child, CliError> {
     let mut command = Command::new(codex_bin);
     command
+        .arg("-c")
+        .arg("mcp_servers.openaiDeveloperDocs.enabled=false")
+        .arg("-c")
+        .arg("mcp_servers.playwright-browser.enabled=false")
         .arg("--enable")
         .arg("code_mode")
         .arg("--enable")
@@ -367,6 +631,7 @@ async fn serve_connection(
     app_tx: mpsc::Sender<String>,
     catalog: CapabilityCatalog,
     host: CapabilityHost,
+    require_new_thread: bool,
 ) -> Result<(), CliError> {
     let websocket = tokio_tungstenite::accept_async(stream)
         .await
@@ -380,12 +645,12 @@ async fn serve_connection(
                 let message = incoming.map_err(|error| CliError::Runtime(format!("TUI WebSocket failed: {error}")))?;
                 match message {
                     Message::Text(text) => {
-                        let rewritten = rewrite_client_message(text.as_str(), &catalog)?;
+                        let rewritten = rewrite_gateway_message(text.as_str(), &catalog, require_new_thread)?;
                         app_tx.send(rewritten).await.map_err(|_| CliError::Runtime("Codex App Server input closed".to_string()))?;
                     }
                     Message::Binary(bytes) => {
                         let text = String::from_utf8(bytes.to_vec()).map_err(|error| CliError::Runtime(format!("TUI sent non-UTF-8 protocol data: {error}")))?;
-                        let rewritten = rewrite_client_message(&text, &catalog)?;
+                        let rewritten = rewrite_gateway_message(&text, &catalog, require_new_thread)?;
                         app_tx.send(rewritten).await.map_err(|_| CliError::Runtime("Codex App Server input closed".to_string()))?;
                     }
                     Message::Ping(bytes) => web_sink.send(Message::Pong(bytes)).await.map_err(|error| CliError::Runtime(error.to_string()))?,
@@ -419,6 +684,38 @@ async fn serve_connection(
         }
     }
     Ok(())
+}
+
+fn rewrite_gateway_message(
+    source: &str,
+    catalog: &CapabilityCatalog,
+    require_new_thread: bool,
+) -> Result<String, CliError> {
+    let method = serde_json::from_str::<Value>(source)
+        .map_err(|error| CliError::Runtime(format!("TUI emitted invalid JSON: {error}")))?
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if require_new_thread && method.as_deref() == Some("thread/resume") {
+        return Err(CliError::Runtime(
+            "ENTRY_NOT_CLOSED: this Gateway requires thread/start; launch a fresh TUI thread instead of resuming an existing thread"
+                .to_string(),
+        ));
+    }
+    let rewritten = rewrite_client_message(source, catalog)?;
+    if method.as_deref() == Some("thread/start") {
+        let operations = catalog
+            .namespaces
+            .iter()
+            .map(|namespace| namespace.operations.len())
+            .sum::<usize>();
+        println!(
+            "GATEWAY_READY thread=start dynamic_namespaces={} dynamic_operations={} code_mode_only=true",
+            catalog.namespaces.len(),
+            operations
+        );
+    }
+    Ok(rewritten)
 }
 
 fn rewrite_client_message(source: &str, catalog: &CapabilityCatalog) -> Result<String, CliError> {
@@ -564,5 +861,100 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(options.codex_bin, PathBuf::from("codex"));
+        assert!(!options.require_new_thread);
+    }
+
+    #[test]
+    fn rejects_resume_when_a_fresh_dynamic_tool_thread_is_required() {
+        let error = rewrite_gateway_message(
+            &json!({"method": "thread/resume", "id": 4, "params": {}}).to_string(),
+            &catalog(),
+            true,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("requires thread/start"));
+    }
+
+    #[test]
+    fn parses_the_fresh_thread_gate() {
+        let options = parse_options(vec![
+            OsString::from("run"),
+            OsString::from("--catalog"),
+            OsString::from("catalog.json"),
+            OsString::from("--bindings"),
+            OsString::from("bindings.json"),
+            OsString::from("--require-new-thread"),
+        ])
+        .unwrap();
+        assert!(options.require_new_thread);
+    }
+
+    #[tokio::test]
+    async fn risk_guard_applies_browser_and_local_write_policy() {
+        let guard = RiskGuard {
+            allow_side_effects: false,
+            policy: HostPolicy {
+                allowed_hosts: vec!["example.com".into()],
+                allow_local_writes: true,
+                allow_low_risk_browser_actions: false,
+            },
+        };
+
+        assert!(
+            guard
+                .authorize("webBrowser", "snapshot", OperationRisk::Read, &json!({}))
+                .await
+                .is_ok()
+        );
+        assert!(
+            guard
+                .authorize("fs", "writeText", OperationRisk::Write, &json!({}))
+                .await
+                .is_ok()
+        );
+        assert!(
+            guard
+                .authorize(
+                    "webBrowser",
+                    "click",
+                    OperationRisk::Write,
+                    &json!({"intent": "read"}),
+                )
+                .await
+                .is_ok()
+        );
+        assert!(
+            guard
+                .authorize(
+                    "webBrowser",
+                    "click",
+                    OperationRisk::Write,
+                    &json!({"intent": "low_risk"}),
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            guard
+                .authorize(
+                    "webBrowser",
+                    "click",
+                    OperationRisk::Write,
+                    &json!({"intent": "high_risk"}),
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn resolves_relative_binding_paths_from_the_binding_directory() {
+        let base = Path::new("C:/workspace/config");
+        assert_eq!(
+            resolve_binding_path(base, PathBuf::from("../artifacts")),
+            PathBuf::from("C:/workspace/config/../artifacts")
+        );
+        let absolute = std::env::current_dir().expect("current directory is absolute");
+        assert_eq!(resolve_binding_path(base, absolute.clone()), absolute);
     }
 }

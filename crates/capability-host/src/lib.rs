@@ -11,6 +11,13 @@ use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+mod desktop;
+
+pub use desktop::{
+    AgentBrowserCliConfig, AgentBrowserHost, BrowserOperation, BrowserOperationHandler,
+    FileReadTextHandler, FileWriteTextHandler, SafeFileHost,
+};
+
 const DEFAULT_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]

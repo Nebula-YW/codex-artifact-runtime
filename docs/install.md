@@ -46,6 +46,8 @@ codex-artifact --version
 
 No PowerShell or `cmd.exe` process is used when the companion invokes a capability binding. Windows installation only uses the shell to unpack or move the executable.
 
+For browser automation, install `agent-browser` and its managed Chromium build. Install `ffmpeg` on `PATH` if video recording is needed. The Windows example resolves the npm launcher to the packaged native executable and launches it with an argument array; the Host never constructs a PowerShell or `cmd.exe` command string. Follow the [Windows browser walkthrough](../examples/windows-browser/README.md) after installing the companion.
+
 ## Verify the download
 
 Every Release includes `SHA256SUMS`. Compare the hash of the archive before extracting it.
@@ -80,6 +82,7 @@ codex-artifact run \
 ```
 
 The companion finds the official `codex` executable through `PATH`. Use `--codex-bin <path>` only when it is installed elsewhere.
+Add `--require-new-thread` when the run must receive project Dynamic Tools at `thread/start`; a resume attempt then fails with `ENTRY_NOT_CLOSED` and must be restarted as a fresh thread.
 
 ## Release process
 

@@ -4,3 +4,7 @@
 /apps/application-runtime/dist/
 *.log
 .DS_Store
+/.agent-browser/
+/.playwright-cli/
+# Generated browser profiles, bindings, recordings, screenshots, and other smoke-test artifacts.
+/artifacts/

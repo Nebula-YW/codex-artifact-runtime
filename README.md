@@ -36,6 +36,8 @@ cargo run -p capability-schema-cli -- \
   examples/vehicle-network/capabilities.json typescript
 ```
 
+The Windows browser example drives an isolated persistent `agent-browser` profile behind the Host policy seam. Browser, file, and approval methods are projected from one catalog into both Codex Dynamic Tools and TypeScript declarations; artifacts stay under the workspace. See [the Windows browser walkthrough](examples/windows-browser/README.md).
+
 Verify everything:
 
 ```bash
@@ -80,5 +82,6 @@ cargo run -p codex-artifact-cli --bin codex-artifact -- \
 `bindings.smoke.json` intentionally contains no executable operations and is only useful for protocol verification. A real installation supplies Host-owned CLI, HTTP, or native bindings for request operations. Side-effect operations are denied unless the user starts the companion with `--allow-side-effects` after reviewing those bindings.
 
 For a headless or manually connected TUI, add `--no-tui`; the command prints the exact `codex --remote ws://127.0.0.1:<port>` invocation.
+For runs that depend on Dynamic Tools injected at `thread/start`, add `--require-new-thread`; the Gateway then rejects `thread/resume` instead of silently running without the project catalog.
 
 See [architecture](docs/architecture/runtime.md) and [Codex protocol research](docs/research/codex-dynamic-tools.md).

@@ -1,0 +1,43 @@
+{
+  "policy": {
+    "allowedHosts": ["github.com"],
+    "allowLocalWrites": true,
+    "allowLowRiskBrowserActions": false
+  },
+  "fileRoots": {
+    "workspace": "../.."
+  },
+  "agentBrowser": {
+    "command": "agent-browser",
+    "args": [],
+    "workingDirectory": "../..",
+    "artifactDirectory": "artifacts/browser",
+    "sessionName": "codex-artifact",
+    "profileDirectory": "artifacts/browser-profile",
+    "headed": true,
+    "timeoutMs": 60000
+  },
+  "operations": [
+    {"namespace":"webBrowser","operation":"attach","handler":"agentBrowserAttach"},
+    {"namespace":"webBrowser","operation":"listPages","handler":"agentBrowserListPages"},
+    {"namespace":"webBrowser","operation":"openPage","handler":"agentBrowserOpenPage"},
+    {"namespace":"webBrowser","operation":"navigate","handler":"agentBrowserNavigate"},
+    {"namespace":"webBrowser","operation":"snapshot","handler":"agentBrowserSnapshot"},
+    {"namespace":"webBrowser","operation":"click","handler":"agentBrowserClick"},
+    {"namespace":"webBrowser","operation":"fill","handler":"agentBrowserFill"},
+    {"namespace":"webBrowser","operation":"press","handler":"agentBrowserPress"},
+    {"namespace":"webBrowser","operation":"read","handler":"agentBrowserRead"},
+    {"namespace":"webBrowser","operation":"scroll","handler":"agentBrowserScroll"},
+    {"namespace":"webBrowser","operation":"waitFor","handler":"agentBrowserWaitFor"},
+    {"namespace":"webBrowser","operation":"closePage","handler":"agentBrowserClosePage"},
+    {"namespace":"webBrowser","operation":"screenshot","handler":"agentBrowserScreenshot"},
+    {"namespace":"webBrowser","operation":"videoStart","handler":"agentBrowserVideoStart"},
+    {"namespace":"webBrowser","operation":"videoStop","handler":"agentBrowserVideoStop"},
+    {"namespace":"webBrowser","operation":"videoInspect","handler":"agentBrowserVideoInspect"},
+    {"namespace":"webBrowser","operation":"download","handler":"agentBrowserDownload"},
+    {"namespace":"fs","operation":"readText","handler":"fileReadText"},
+    {"namespace":"fs","operation":"writeText","handler":"fileWriteText"},
+    {"namespace":"approval","operation":"getPolicy","handler":"policyInfo"},
+    {"namespace":"approval","operation":"request","handler":"policyRequest"}
+  ]
+}
